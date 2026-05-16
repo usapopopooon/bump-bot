@@ -1,0 +1,22 @@
+[project]
+name = "bump-bot"
+version = "0.1.0"
+description = "Discord bump reminder bot"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "discord.py~=2.6.0",
+  "SQLAlchemy~=2.0.0",
+  "pydantic-settings~=2.0",
+  "asyncpg~=0.30.0",
+  "greenlet~=3.0.0",
+  "emoji~=2.14.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]

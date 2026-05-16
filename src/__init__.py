@@ -1,0 +1,1 @@
+"""bump-bot package."""
