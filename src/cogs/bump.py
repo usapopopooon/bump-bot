@@ -199,7 +199,9 @@ class BumpRoleSelectMenu(discord.ui.RoleSelect["BumpRoleSelectView"]):
                 if interaction.message:
                     await interaction.followup.edit_message(
                         interaction.message.id,
-                        content=f"通知先ロールを **{selected_role.name}** に変更しました。",
+                        content=(
+                            f"通知先ロールを **{selected_role.name}** に変更しました。"
+                        ),
                         view=None,
                     )
                 else:
@@ -983,10 +985,12 @@ class BumpCog(commands.Cog):
 
         try:
             # ギルド単位のロックで重複セットアップを防止
-            async with get_resource_lock(f"bump_setup:{guild_id}"):
+            async with (
+                get_resource_lock(f"bump_setup:{guild_id}"),
+                async_session() as session,
+            ):
                 # 設定を保存
-                async with async_session() as session:
-                    await upsert_bump_config(session, guild_id, channel_id)
+                await upsert_bump_config(session, guild_id, channel_id)
 
             # キャッシュに追加
             if self._bump_guild_ids is not None:
@@ -1000,47 +1004,45 @@ class BumpCog(commands.Cog):
             reminder_time_text: str | None = None  # 具体的なリマインド時刻
             custom_role_name: str | None = None  # カスタム通知ロール名
 
-                if isinstance(channel, discord.TextChannel):
-                    result = await self._find_recent_bump(channel)
-                    if result:
-                        service_name, bump_time = result
-                        detected_service = service_name
-                        remind_at = bump_time + timedelta(hours=REMINDER_HOURS)
-                        now = datetime.now(UTC)
+            if isinstance(channel, discord.TextChannel):
+                result = await self._find_recent_bump(channel)
+                if result:
+                    service_name, bump_time = result
+                    detected_service = service_name
+                    remind_at = bump_time + timedelta(hours=REMINDER_HOURS)
+                    now = datetime.now(UTC)
 
-                        if remind_at > now:
-                            # 次の bump まで待機中 → リマインダーを作成
-                            async with async_session() as session:
-                                reminder = await upsert_bump_reminder(
-                                    session,
-                                    guild_id=guild_id,
-                                    channel_id=channel_id,
-                                    service_name=service_name,
-                                    remind_at=remind_at,
-                                )
-                                is_enabled = reminder.is_enabled
-                                # カスタムロール名を取得
-                                if reminder.role_id:
-                                    role = interaction.guild.get_role(
-                                        int(reminder.role_id)
-                                    )
-                                    if role:
-                                        custom_role_name = role.name
-                            ts = int(remind_at.timestamp())
-                            reminder_time_text = f"<t:{ts}:t>"
-                            recent_bump_info = (
-                                f"\n\n**📊 直近の bump を検出:**\n"
-                                f"サービス: **{service_name}**\n"
-                                f"次の bump 可能時刻: {reminder_time_text}\n"
-                                f"リマインダーを自動設定しました。"
+                    if remind_at > now:
+                        # 次の bump まで待機中 → リマインダーを作成
+                        async with async_session() as session:
+                            reminder = await upsert_bump_reminder(
+                                session,
+                                guild_id=guild_id,
+                                channel_id=channel_id,
+                                service_name=service_name,
+                                remind_at=remind_at,
                             )
-                        else:
-                            # 既に bump 可能
-                            recent_bump_info = (
-                                f"\n\n**📊 直近の bump を検出:**\n"
-                                f"サービス: **{service_name}**\n"
-                                f"✅ 現在 bump 可能です！"
-                            )
+                            is_enabled = reminder.is_enabled
+                            # カスタムロール名を取得
+                            if reminder.role_id:
+                                role = interaction.guild.get_role(int(reminder.role_id))
+                                if role:
+                                    custom_role_name = role.name
+                        ts = int(remind_at.timestamp())
+                        reminder_time_text = f"<t:{ts}:t>"
+                        recent_bump_info = (
+                            f"\n\n**📊 直近の bump を検出:**\n"
+                            f"サービス: **{service_name}**\n"
+                            f"次の bump 可能時刻: {reminder_time_text}\n"
+                            f"リマインダーを自動設定しました。"
+                        )
+                    else:
+                        # 既に bump 可能
+                        recent_bump_info = (
+                            f"\n\n**📊 直近の bump を検出:**\n"
+                            f"サービス: **{service_name}**\n"
+                            f"✅ 現在 bump 可能です！"
+                        )
         except Exception:
             logger.exception(
                 "bump_setup failed: guild=%s channel=%s user=%s",

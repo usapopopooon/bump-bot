@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run CI checks locally."""
 
+import os
 import subprocess
 import sys
 from typing import NamedTuple
@@ -10,6 +11,7 @@ class Check(NamedTuple):
     name: str
     command: list[str]
     is_test: bool = False
+    extra_env: dict[str, str] | None = None
 
 
 CHECKS: list[Check] = [
@@ -18,13 +20,25 @@ CHECKS: list[Check] = [
     Check("Ruff format", ["ruff", "format", "--check", "."]),
     Check("Ruff check", ["ruff", "check", "src", "tests", "scripts"]),
     Check("mypy", ["mypy", "src"]),
-    Check("pytest", ["pytest", "-v"], is_test=True),
+    Check(
+        "pytest",
+        ["pytest", "-v", "--cov=src", "--cov-report=term-missing"],
+        is_test=True,
+        extra_env={
+            "DISCORD_TOKEN": "test_token",
+            "DATABASE_URL": "postgresql+asyncpg://user:pass@localhost/test_db",
+            "PYTHONPATH": ".",
+        },
+    ),
 ]
 
 
 def run_check(check: Check) -> bool:
     print(f"\n=== {check.name} ===")
-    return subprocess.run(check.command).returncode == 0
+    env = os.environ.copy()
+    if check.extra_env:
+        env.update(check.extra_env)
+    return subprocess.run(check.command, env=env).returncode == 0
 
 
 def main() -> int:

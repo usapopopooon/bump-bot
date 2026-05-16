@@ -65,7 +65,7 @@ jobs:
       - run: pip install -e ".[dev]"
 
       - name: pytest
-        run: pytest -v
+        run: pytest -v --cov=src --cov-report=term-missing --cov-report=xml
         env:
           DISCORD_TOKEN: test_token
           DATABASE_URL: postgresql+asyncpg://test_user:test_password@localhost/bump_bot_test
