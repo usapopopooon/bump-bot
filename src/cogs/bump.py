@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import discord
@@ -55,6 +56,36 @@ DEBUG_USER_ID = 1058651415289012295
 # bump 成功を判定するキーワード
 DISBOARD_SUCCESS_KEYWORD = "表示順をアップ"
 DISSOKU_SUCCESS_KEYWORD = "アップ"
+
+
+@dataclass(frozen=True)
+class BumpServiceDefinition:
+    name: str
+    bot_id: int
+    success_keywords: tuple[str, ...]
+    check_title: bool = False
+    check_description: bool = True
+    check_fields: bool = False
+    check_content: bool = False
+
+
+BUMP_SERVICES: tuple[BumpServiceDefinition, ...] = (
+    BumpServiceDefinition(
+        name="DISBOARD",
+        bot_id=DISBOARD_BOT_ID,
+        success_keywords=(DISBOARD_SUCCESS_KEYWORD,),
+        check_description=True,
+    ),
+    BumpServiceDefinition(
+        name="ディス速報",
+        bot_id=DISSOKU_BOT_ID,
+        success_keywords=(DISSOKU_SUCCESS_KEYWORD,),
+        check_title=True,
+        check_description=True,
+        check_fields=True,
+        check_content=True,
+    ),
+)
 
 # リマインダーの送信間隔 (bump から何時間後か)
 REMINDER_HOURS = 2
@@ -451,6 +482,18 @@ class BumpCog(commands.Cog):
         if self._reminder_check.is_running():
             self._reminder_check.cancel()
 
+    def _get_monitored_services(self) -> tuple[BumpServiceDefinition, ...]:
+        return BUMP_SERVICES
+
+    def _get_monitored_service_names(self) -> list[str]:
+        return [service.name for service in self._get_monitored_services()]
+
+    def _get_service_by_bot_id(self, bot_id: int) -> BumpServiceDefinition | None:
+        for service in self._get_monitored_services():
+            if service.bot_id == bot_id:
+                return service
+        return None
+
     # ==========================================================================
     # クリーンアップリスナー
     # ==========================================================================
@@ -532,8 +575,10 @@ class BumpCog(commands.Cog):
         if not message.guild:
             return
 
-        # DISBOARD/ディス速報 Bot 以外は無視 (DEBUG_USER_ID はテスト用)
-        if message.author.id not in (DISBOARD_BOT_ID, DISSOKU_BOT_ID, DEBUG_USER_ID):
+        service = self._get_service_by_bot_id(message.author.id)
+
+        # 監視対象 Bot 以外は無視 (DEBUG_USER_ID はテスト用)
+        if not service and message.author.id != DEBUG_USER_ID:
             return
 
         guild_id = str(message.guild.id)
@@ -542,7 +587,7 @@ class BumpCog(commands.Cog):
         if self._bump_guild_ids is not None and guild_id not in self._bump_guild_ids:
             return
 
-        bot_name = "DISBOARD" if message.author.id == DISBOARD_BOT_ID else "ディス速報"
+        bot_name = service.name if service else "DEBUG"
         logger.info(
             "Bump bot message received: bot=%s guild=%s channel=%s",
             bot_name,
@@ -661,10 +706,11 @@ class BumpCog(commands.Cog):
         """メッセージから bump 成功を検知し、サービス名を返す。
 
         Returns:
-            サービス名 ("DISBOARD" or "ディス速報")。検知できなければ None
+            サービス名。検知できなければ None
         """
-        is_disboard = message.author.id == DISBOARD_BOT_ID
-        is_dissoku = message.author.id == DISSOKU_BOT_ID
+        service = self._get_service_by_bot_id(message.author.id)
+        if not service:
+            return None
 
         for embed in message.embeds:
             description = embed.description or ""
@@ -678,41 +724,34 @@ class BumpCog(commands.Cog):
             ]
             logger.debug(
                 "Parsing embed: bot=%s title=%s description=%s fields=%s",
-                "DISBOARD" if is_disboard else "ディス速報",
+                service.name,
                 title[:80] if title else None,
                 description[:80] if description else None,
                 fields_summary,
             )
 
-            # DISBOARD: description に「表示順をアップ」
-            if is_disboard and DISBOARD_SUCCESS_KEYWORD in description:
-                return "DISBOARD"
+            for keyword in service.success_keywords:
+                if service.check_title and keyword in title:
+                    return service.name
+                if service.check_description and keyword in description:
+                    return service.name
+                if service.check_fields:
+                    for field in fields:
+                        if keyword in (field.name or ""):
+                            return service.name
+                        if keyword in (field.value or ""):
+                            return service.name
 
-            # ディス速報: title, description, fields のいずれかに「アップ」
-            if is_dissoku:
-                if DISSOKU_SUCCESS_KEYWORD in title:
-                    return "ディス速報"
-                if DISSOKU_SUCCESS_KEYWORD in description:
-                    return "ディス速報"
-                for field in fields:
-                    if DISSOKU_SUCCESS_KEYWORD in (field.name or ""):
-                        return "ディス速報"
-                    if DISSOKU_SUCCESS_KEYWORD in (field.value or ""):
-                        return "ディス速報"
-
-        # ディス速報: message.content に「アップ」
-        if (
-            is_dissoku
-            and message.content
-            and DISSOKU_SUCCESS_KEYWORD in message.content
-        ):
-            return "ディス速報"
+        if service.check_content and message.content:
+            for keyword in service.success_keywords:
+                if keyword in message.content:
+                    return service.name
 
         # 検知できなかった
         logger.debug(
             "Bump success keyword not found: bot=%s keyword=%s",
-            "DISBOARD" if is_disboard else "ディス速報",
-            DISBOARD_SUCCESS_KEYWORD if is_disboard else DISSOKU_SUCCESS_KEYWORD,
+            service.name,
+            ",".join(service.success_keywords),
         )
         return None
 
@@ -735,33 +774,37 @@ class BumpCog(commands.Cog):
         """メンバーが Server Bumper ロールを持っているか確認する。"""
         return any(role.name == TARGET_ROLE_NAME for role in member.roles)
 
-    async def _find_recent_bump(
+    async def _find_recent_bumps(
         self, channel: discord.TextChannel, limit: int = 100
-    ) -> tuple[str, datetime] | None:
-        """チャンネルの履歴から最近の bump 成功メッセージを探す。
+    ) -> dict[str, datetime]:
+        """チャンネル履歴からサービス別の最新 bump 成功時刻を探す。
 
         Args:
             channel: 検索対象のチャンネル
             limit: 検索するメッセージ数の上限
 
         Returns:
-            (サービス名, bump時刻) のタプル。見つからなければ None
+            {"DISBOARD": datetime, "ディス速報": datetime} の部分集合
         """
+        latest: dict[str, datetime] = {}
+        monitored_service_names = set(self._get_monitored_service_names())
         try:
             async for message in channel.history(limit=limit):
-                # DISBOARD/ディス速報 Bot 以外は無視
-                if message.author.id not in (DISBOARD_BOT_ID, DISSOKU_BOT_ID):
+                # 監視対象サービス Bot 以外は無視
+                if not self._get_service_by_bot_id(message.author.id):
                     continue
 
                 # bump 成功かどうかを判定
                 service_name = self._detect_bump_success(message)
-                if service_name:
-                    return (service_name, message.created_at)
+                if service_name and service_name not in latest:
+                    latest[service_name] = message.created_at
+                    if monitored_service_names.issubset(set(latest)):
+                        break
 
         except discord.HTTPException as e:
             logger.warning("Failed to search channel history: %s", e)
 
-        return None
+        return latest
 
     async def _sync_next_reminder_from_history(
         self, guild: discord.Guild, channel_id: str
@@ -770,37 +813,43 @@ class BumpCog(commands.Cog):
         if not isinstance(channel, discord.TextChannel):
             return (False, "監視チャンネルを取得できませんでした。")
 
-        result = await self._find_recent_bump(channel)
-        if not result:
+        recent_bumps = await self._find_recent_bumps(channel)
+        if not recent_bumps:
             return (False, "履歴から bump 成功メッセージを見つけられませんでした。")
-
-        service_name, bump_time = result
-        remind_at = bump_time + timedelta(hours=REMINDER_HOURS)
         now = datetime.now(UTC)
-
-        if remind_at <= now:
-            ts = int(bump_time.timestamp())
-            return (
-                False,
-                f"前回の bump は <t:{ts}:F> で、すでに次回可能時刻を過ぎています。",
-            )
+        configured: list[str] = []
+        skipped: list[str] = []
 
         async with async_session() as session:
-            reminder = await upsert_bump_reminder(
-                session,
-                guild_id=str(guild.id),
-                channel_id=channel_id,
-                service_name=service_name,
-                remind_at=remind_at,
-            )
+            for service_name, bump_time in recent_bumps.items():
+                remind_at = bump_time + timedelta(hours=REMINDER_HOURS)
+                if remind_at <= now:
+                    skipped.append(service_name)
+                    continue
 
-        ts = int(remind_at.timestamp())
-        status = "有効" if reminder.is_enabled else "無効"
+                reminder = await upsert_bump_reminder(
+                    session,
+                    guild_id=str(guild.id),
+                    channel_id=channel_id,
+                    service_name=service_name,
+                    remind_at=remind_at,
+                )
+                ts = int(remind_at.timestamp())
+                status = "有効" if reminder.is_enabled else "無効"
+                configured.append(f"・{service_name}: <t:{ts}:F> (通知: **{status}**)")
+
+        if configured:
+            msg = "履歴から次回通知を設定しました。\n" + "\n".join(configured)
+            if skipped:
+                msg += "\n\n次回可能時刻を過ぎていたため未設定: " + " / ".join(skipped)
+            return (True, msg)
+
         return (
-            True,
-            f"履歴から **{service_name}** を検出し、"
-            f"次回通知を <t:{ts}:F> に設定しました。"
-            f"\n通知状態: **{status}**",
+            False,
+            (
+                "履歴には bump 成功がありましたが、"
+                "いずれも次回可能時刻を過ぎているため設定しませんでした。"
+            ),
         )
 
     # ==========================================================================
@@ -1059,9 +1108,11 @@ class BumpCog(commands.Cog):
             custom_role_name: str | None = None  # カスタム通知ロール名
 
             if isinstance(channel, discord.TextChannel):
-                result = await self._find_recent_bump(channel)
-                if result:
-                    service_name, bump_time = result
+                recent_bumps = await self._find_recent_bumps(channel)
+                if recent_bumps:
+                    service_name, bump_time = max(
+                        recent_bumps.items(), key=lambda item: item[1]
+                    )
                     detected_service = service_name
                     remind_at = bump_time + timedelta(hours=REMINDER_HOURS)
                     now = datetime.now(UTC)
@@ -1110,7 +1161,7 @@ class BumpCog(commands.Cog):
         base_description = (
             f"監視チャンネル: <#{channel_id}>\n"
             f"現在の通知先: `@{display_role}`\n\n"
-            "DISBOARD (`/bump`) または ディス速報 (`/dissoku up`) の "
+            f"監視対象サービス: {', '.join(self._get_monitored_service_names())}\n"
             f"bump 成功を検知し、{reminder_desc}"
         )
 
@@ -1128,20 +1179,14 @@ class BumpCog(commands.Cog):
             self.bot.add_view(view)
             await interaction.followup.send(embed=embed, view=view)
         else:
-            # 検出されなかった場合、両方のサービスのボタンを表示
+            # 検出されなかった場合、全サービスのボタンを表示
             await interaction.followup.send(embed=embed)
-            # DISBOARD 用
-            view_disboard = BumpNotificationView(guild_id, "DISBOARD", True)
-            self.bot.add_view(view_disboard)
-            await interaction.followup.send(
-                "**DISBOARD** の通知設定:", view=view_disboard
-            )
-            # ディス速報用
-            view_dissoku = BumpNotificationView(guild_id, "ディス速報", True)
-            self.bot.add_view(view_dissoku)
-            await interaction.followup.send(
-                "**ディス速報** の通知設定:", view=view_dissoku
-            )
+            for service_name in self._get_monitored_service_names():
+                view = BumpNotificationView(guild_id, service_name, True)
+                self.bot.add_view(view)
+                await interaction.followup.send(
+                    f"**{service_name}** の通知設定:", view=view
+                )
         logger.info(
             "Bump monitoring enabled: guild=%s channel=%s",
             guild_id,
@@ -1161,19 +1206,21 @@ class BumpCog(commands.Cog):
 
         async with async_session() as session:
             config = await get_bump_config(session, guild_id)
-            # 各サービスのリマインダー設定を取得
-            disboard_reminder = await get_bump_reminder(session, guild_id, "DISBOARD")
-            dissoku_reminder = await get_bump_reminder(session, guild_id, "ディス速報")
+            reminders_by_service: dict[str, BumpReminder | None] = {}
+            for service_name in self._get_monitored_service_names():
+                reminders_by_service[service_name] = await get_bump_reminder(
+                    session, guild_id, service_name
+                )
 
         if config:
             # Discord タイムスタンプ形式で設定日時を表示
             ts = int(config.created_at.timestamp())
-            disboard_status = self._format_service_status(
-                interaction.guild, "DISBOARD", disboard_reminder
-            )
-            dissoku_status = self._format_service_status(
-                interaction.guild, "ディス速報", dissoku_reminder
-            )
+            service_statuses = [
+                self._format_service_status(
+                    interaction.guild, service_name, reminders_by_service[service_name]
+                )
+                for service_name in self._get_monitored_service_names()
+            ]
 
             embed = discord.Embed(
                 title="Bump 監視設定",
@@ -1181,8 +1228,7 @@ class BumpCog(commands.Cog):
                     f"**監視チャンネル:** <#{config.channel_id}>\n"
                     f"**設定日時:** <t:{ts}:F>\n\n"
                     f"**サービス別ステータス:**\n"
-                    f"{disboard_status}\n"
-                    f"{dissoku_status}"
+                    f"{'\n'.join(service_statuses)}"
                 ),
                 color=DEFAULT_EMBED_COLOR,
             )
@@ -1290,8 +1336,8 @@ async def setup(bot: commands.Bot) -> None:
     # 永続 View の登録 (Bot 再起動後もボタンが動作するように)
     # 注: 実際のデータは DB から取得するため、ここではダミーの View を登録
     # discord.py は custom_id のプレフィックスでマッチングする
-    bot.add_view(BumpNotificationView("0", "DISBOARD", True))
-    bot.add_view(BumpNotificationView("0", "ディス速報", True))
+    for service in BUMP_SERVICES:
+        bot.add_view(BumpNotificationView("0", service.name, True))
 
     cog = BumpCog(bot)
     await bot.add_cog(cog)

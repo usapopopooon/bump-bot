@@ -13,6 +13,7 @@ os.environ.setdefault(
 )
 
 from src.cogs.bump import (
+    BUMP_SERVICES,
     DISBOARD_BOT_ID,
     DISBOARD_SUCCESS_KEYWORD,
     DISSOKU_BOT_ID,
@@ -150,6 +151,14 @@ def test_has_target_role() -> None:
     assert cog._has_target_role(_make_member(has_target_role=False)) is False
 
 
+def test_service_registry_helpers() -> None:
+    cog = _make_cog()
+    names = cog._get_monitored_service_names()
+    assert names == [service.name for service in BUMP_SERVICES]
+    for service in BUMP_SERVICES:
+        assert cog._get_service_by_bot_id(service.bot_id) == service
+
+
 def test_sync_from_history_returns_no_result_when_not_found() -> None:
     cog = _make_cog()
     guild = MagicMock(spec=discord.Guild)
@@ -162,10 +171,49 @@ def test_sync_from_history_returns_no_result_when_not_found() -> None:
     async def _run() -> None:
         from unittest.mock import AsyncMock, patch
 
-        with patch.object(cog, "_find_recent_bump", AsyncMock(return_value=None)):
+        with patch.object(cog, "_find_recent_bumps", AsyncMock(return_value={})):
             ok, msg = await cog._sync_next_reminder_from_history(guild, "10")
             assert ok is False
             assert "見つけられませんでした" in msg
+
+    import asyncio
+
+    asyncio.run(_run())
+
+
+def test_sync_from_history_sets_both_services() -> None:
+    cog = _make_cog()
+    guild = MagicMock(spec=discord.Guild)
+    guild.id = 1
+
+    channel = MagicMock(spec=discord.TextChannel)
+    channel.id = 10
+    cog.bot.get_channel.return_value = channel
+
+    async def _run() -> None:
+        from unittest.mock import AsyncMock, patch
+
+        now = datetime.now(UTC)
+        recent = {
+            service.name: now - timedelta(minutes=30 - idx * 5)
+            for idx, service in enumerate(BUMP_SERVICES)
+        }
+
+        fake_reminder = MagicMock()
+        fake_reminder.is_enabled = True
+
+        with (
+            patch.object(cog, "_find_recent_bumps", AsyncMock(return_value=recent)),
+            patch(
+                "src.cogs.bump.upsert_bump_reminder",
+                AsyncMock(return_value=fake_reminder),
+            ) as upsert_mock,
+        ):
+            ok, msg = await cog._sync_next_reminder_from_history(guild, "10")
+            assert ok is True
+            for service in BUMP_SERVICES:
+                assert service.name in msg
+            assert upsert_mock.await_count == len(BUMP_SERVICES)
 
     import asyncio
 
