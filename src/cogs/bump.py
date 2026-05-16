@@ -500,7 +500,8 @@ class BumpCog(commands.Cog):
             return
 
         # Server Bumper ロールを持っているか確認
-        if not self._has_target_role(user):
+        # members intent 無効時は User が来るため、ロールチェックはスキップする。
+        if isinstance(user, discord.Member) and not self._has_target_role(user):
             logger.info(
                 "User does not have required role, skipping reminder: "
                 "user=%s required_role=%s guild=%s",
@@ -640,7 +641,9 @@ class BumpCog(commands.Cog):
         )
         return None
 
-    def _get_bump_user(self, message: discord.Message) -> discord.Member | None:
+    def _get_bump_user(
+        self, message: discord.Message
+    ) -> discord.abc.User | discord.Member | None:
         """bump を実行したユーザーを取得する。
 
         message.interaction_metadata から取得を試み、失敗したら None を返す。
@@ -648,11 +651,10 @@ class BumpCog(commands.Cog):
         # スラッシュコマンドの場合、interaction_metadata.user に実行者がいる
         if message.interaction_metadata and message.interaction_metadata.user:
             user = message.interaction_metadata.user
-            # Member でない場合は guild から取得し直す
+            # Member でない場合でも User として利用可能
             if isinstance(user, discord.Member):
                 return user
-            if message.guild:
-                return message.guild.get_member(user.id)
+            return user
         return None
 
     def _has_target_role(self, member: discord.Member) -> bool:
@@ -694,7 +696,7 @@ class BumpCog(commands.Cog):
     def _build_detection_embed(
         self,
         service_name: str,
-        user: discord.Member,
+        user: discord.abc.User | discord.Member,
         remind_at: datetime,
         is_enabled: bool,
         role_name: str | None = None,
