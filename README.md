@@ -1,5 +1,7 @@
 # bump-bot
 
+Discordのbump成功を検知し、一定時間後にリマインドを送信するBot。
+
 ## Requirements
 - Python 3.12
 - PostgreSQL
