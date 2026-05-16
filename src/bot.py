@@ -16,8 +16,9 @@ class BumpBot(commands.Bot):
         intents.guilds = True
         # Privileged Intent を必須にしない。
         # (Portal 側で未有効でも Railway で起動を継続できるようにする)
-        intents.members = False
-        intents.message_content = False
+        intents.members = True
+        # bump 検知では bot メッセージ本文を参照するため有効化する。
+        intents.message_content = True
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self) -> None:
