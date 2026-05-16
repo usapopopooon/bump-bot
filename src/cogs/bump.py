@@ -634,7 +634,7 @@ class BumpCog(commands.Cog):
             return "ディス速報"
 
         # 検知できなかった
-        logger.info(
+        logger.debug(
             "Bump success keyword not found: bot=%s keyword=%s",
             "DISBOARD" if is_disboard else "ディス速報",
             DISBOARD_SUCCESS_KEYWORD if is_disboard else DISSOKU_SUCCESS_KEYWORD,
