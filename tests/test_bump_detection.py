@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import discord
@@ -19,6 +20,7 @@ from src.cogs.bump import (
     TARGET_ROLE_NAME,
     BumpCog,
 )
+from src.database.models import BumpReminder
 
 
 def _make_cog() -> BumpCog:
@@ -168,3 +170,34 @@ def test_sync_from_history_returns_no_result_when_not_found() -> None:
     import asyncio
 
     asyncio.run(_run())
+
+
+def test_format_service_status_with_future_reminder() -> None:
+    cog = _make_cog()
+    guild = MagicMock(spec=discord.Guild)
+    role = MagicMock(spec=discord.Role)
+    role.name = "Bump通知"
+    guild.get_role.return_value = role
+
+    reminder = BumpReminder(
+        guild_id="1",
+        channel_id="2",
+        service_name="DISBOARD",
+        remind_at=datetime.now(UTC) + timedelta(minutes=30),
+        is_enabled=True,
+        role_id="123",
+    )
+
+    status = cog._format_service_status(guild, "DISBOARD", reminder)
+    assert "通知: **有効**" in status
+    assert "通知ロール: `@Bump通知`" in status
+    assert "次回bump可能時刻: <t:" in status
+
+
+def test_format_service_status_without_reminder() -> None:
+    cog = _make_cog()
+    guild = MagicMock(spec=discord.Guild)
+    status = cog._format_service_status(guild, "ディス速報", None)
+    assert "通知: **有効 (デフォルト)**" in status
+    assert f"通知ロール: `@{TARGET_ROLE_NAME}` (デフォルト)" in status
+    assert "次回bump可能時刻: 未判定" in status
