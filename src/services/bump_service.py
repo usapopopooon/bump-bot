@@ -292,7 +292,7 @@ async def update_bump_reminder_role(
         role_id: 新しい通知ロールの ID (None ならデフォルトロールに戻す)
 
     Returns:
-        更新できたら True、レコードが見つからなければ False
+        更新できたら True
     """
     reminder = await get_bump_reminder(session, guild_id, service_name)
 
@@ -301,13 +301,10 @@ async def update_bump_reminder_role(
         await session.commit()
         return True
 
-    # まだリマインダーレコードがない場合でも、ロール設定を保存できるようにする。
-    # channel_id は既存の bump 設定があればそれを使い、なければ空文字で作成する。
-    config = await get_bump_config(session, guild_id)
-    channel_id = config.channel_id if config else ""
+    # 初回設定時などでレコード未作成の場合は作成してロール設定を保持する。
     new_reminder = BumpReminder(
         guild_id=guild_id,
-        channel_id=channel_id,
+        channel_id="",  # 通知先チャンネルは bump 検知時に確定する
         service_name=service_name,
         remind_at=None,
         is_enabled=True,

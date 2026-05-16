@@ -45,3 +45,31 @@ async def test_update_bump_reminder_role_updates_existing(
     assert updated is True
     assert reminder.role_id == "999"
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_update_bump_reminder_role_creates_when_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = DummySession()
+
+    monkeypatch.setattr(
+        bump_service,
+        "get_bump_reminder",
+        AsyncMock(return_value=None),
+    )
+
+    updated = await bump_service.update_bump_reminder_role(
+        session, "1", "DISBOARD", "999"
+    )
+
+    assert updated is True
+    assert len(session.added) == 1
+    created = session.added[0]
+    assert isinstance(created, BumpReminder)
+    assert created.guild_id == "1"
+    assert created.service_name == "DISBOARD"
+    assert created.channel_id == ""
+    assert created.role_id == "999"
+    assert created.remind_at is None
+    session.commit.assert_awaited_once()
