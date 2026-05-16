@@ -174,6 +174,17 @@ class BumpRoleSelectMenu(discord.ui.RoleSelect["BumpRoleSelectView"]):
             return
 
         selected_role = self.values[0]
+        try:
+            await interaction.response.defer()
+        except (discord.HTTPException, discord.InteractionResponded):
+            logger.warning(
+                "Role select defer failed: guild=%s user=%s service=%s",
+                interaction.guild_id,
+                interaction.user.id if interaction.user else None,
+                self.service_name,
+                exc_info=True,
+            )
+            return
 
         # ギルド・サービスごとのロックで並行リクエストをシリアライズ
         async with get_resource_lock(
@@ -184,10 +195,27 @@ class BumpRoleSelectMenu(discord.ui.RoleSelect["BumpRoleSelectView"]):
                     session, self.guild_id, self.service_name, str(selected_role.id)
                 )
 
-            await interaction.response.edit_message(
-                content=f"通知先ロールを **{selected_role.name}** に変更しました。",
-                view=None,
-            )
+            try:
+                if interaction.message:
+                    await interaction.followup.edit_message(
+                        interaction.message.id,
+                        content=f"通知先ロールを **{selected_role.name}** に変更しました。",
+                        view=None,
+                    )
+                else:
+                    await interaction.followup.send(
+                        f"通知先ロールを **{selected_role.name}** に変更しました。",
+                        ephemeral=True,
+                    )
+            except discord.HTTPException:
+                logger.warning(
+                    "Role select response failed: guild=%s user=%s service=%s role=%s",
+                    interaction.guild_id,
+                    interaction.user.id if interaction.user else None,
+                    self.service_name,
+                    selected_role.id,
+                    exc_info=True,
+                )
             logger.info(
                 "Bump notification role changed: guild=%s service=%s role=%s",
                 self.guild_id,
@@ -215,6 +243,17 @@ class BumpRoleSelectView(discord.ui.View):
         _button: discord.ui.Button[BumpRoleSelectView],
     ) -> None:
         """ロールをデフォルト (Server Bumper) に戻す。"""
+        try:
+            await interaction.response.defer()
+        except (discord.HTTPException, discord.InteractionResponded):
+            logger.warning(
+                "Role reset defer failed: guild=%s user=%s",
+                interaction.guild_id,
+                interaction.user.id if interaction.user else None,
+                exc_info=True,
+            )
+            return
+
         guild_id = str(interaction.guild_id) if interaction.guild_id else ""
         # service_name はメニューから取得 (順序は実装依存なので型で探す)
         menu = None
@@ -232,7 +271,19 @@ class BumpRoleSelectView(discord.ui.View):
                 await update_bump_reminder_role(session, guild_id, service_name, None)
 
             msg = f"通知先ロールを **{TARGET_ROLE_NAME}** (デフォルト) に戻しました。"
-            await interaction.response.edit_message(content=msg, view=None)
+            if interaction.message:
+                try:
+                    await interaction.followup.edit_message(
+                        interaction.message.id, content=msg, view=None
+                    )
+                except discord.HTTPException:
+                    logger.warning(
+                        "Role reset response failed: guild=%s user=%s service=%s",
+                        interaction.guild_id,
+                        interaction.user.id if interaction.user else None,
+                        service_name,
+                        exc_info=True,
+                    )
             logger.info(
                 "Bump notification role reset to default: guild=%s service=%s",
                 guild_id,
@@ -291,6 +342,13 @@ class BumpNotificationView(discord.ui.View):
         try:
             await interaction.response.defer()
         except (discord.HTTPException, discord.InteractionResponded):
+            logger.warning(
+                "Toggle defer failed: guild=%s user=%s service=%s",
+                interaction.guild_id,
+                interaction.user.id if interaction.user else None,
+                self.service_name,
+                exc_info=True,
+            )
             return
 
         # ギルド・サービスごとのロックで並行リクエストをシリアライズ
@@ -305,12 +363,22 @@ class BumpNotificationView(discord.ui.View):
             self._update_toggle_button(new_state)
 
             status = "有効" if new_state else "無効"
-            if interaction.message:
-                await interaction.message.edit(view=self)
-            await interaction.followup.send(
-                f"**{self.service_name}** の通知を **{status}** にしました。",
-                ephemeral=True,
-            )
+            try:
+                if interaction.message:
+                    await interaction.message.edit(view=self)
+                await interaction.followup.send(
+                    f"**{self.service_name}** の通知を **{status}** にしました。",
+                    ephemeral=True,
+                )
+            except discord.HTTPException:
+                logger.warning(
+                    "Toggle response failed: guild=%s user=%s service=%s state=%s",
+                    interaction.guild_id,
+                    interaction.user.id if interaction.user else None,
+                    self.service_name,
+                    new_state,
+                    exc_info=True,
+                )
             logger.info(
                 "Bump notification toggled: guild=%s service=%s enabled=%s",
                 self.guild_id,
@@ -335,6 +403,18 @@ class BumpNotificationView(discord.ui.View):
             )
             return
 
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except (discord.HTTPException, discord.InteractionResponded):
+            logger.warning(
+                "Role button defer failed: guild=%s user=%s service=%s",
+                interaction.guild_id,
+                interaction.user.id if interaction.user else None,
+                self.service_name,
+                exc_info=True,
+            )
+            return
+
         # ギルド・サービスごとのロックで並行リクエストをシリアライズ
         async with get_resource_lock(
             f"bump_notification:{self.guild_id}:{self.service_name}"
@@ -349,11 +429,20 @@ class BumpNotificationView(discord.ui.View):
                     current_role_id = reminder.role_id
 
             view = BumpRoleSelectView(self.guild_id, self.service_name, current_role_id)
-            await interaction.response.send_message(
-                f"**{self.service_name}** の通知先ロールを選択してください。",
-                view=view,
-                ephemeral=True,
-            )
+            try:
+                await interaction.followup.send(
+                    f"**{self.service_name}** の通知先ロールを選択してください。",
+                    view=view,
+                    ephemeral=True,
+                )
+            except discord.HTTPException:
+                logger.warning(
+                    "Role button followup failed: guild=%s user=%s service=%s",
+                    interaction.guild_id,
+                    interaction.user.id if interaction.user else None,
+                    self.service_name,
+                    exc_info=True,
+                )
 
 
 class BumpCog(commands.Cog):
@@ -601,7 +690,7 @@ class BumpCog(commands.Cog):
                 {"name": f.name, "value": f.value[:80] if f.value else ""}
                 for f in fields
             ]
-            logger.info(
+            logger.debug(
                 "Parsing embed: bot=%s title=%s description=%s fields=%s",
                 "DISBOARD" if is_disboard else "ディス速報",
                 title[:80] if title else None,
@@ -881,16 +970,23 @@ class BumpCog(commands.Cog):
         try:
             await interaction.response.defer()
         except (discord.HTTPException, discord.InteractionResponded):
+            logger.warning(
+                "bump_setup defer failed: guild=%s user=%s",
+                interaction.guild_id,
+                interaction.user.id if interaction.user else None,
+                exc_info=True,
+            )
             return
 
         guild_id = str(interaction.guild.id)
         channel_id = str(interaction.channel_id)
 
-        # ギルド単位のロックで重複セットアップを防止
-        async with get_resource_lock(f"bump_setup:{guild_id}"):
-            # 設定を保存
-            async with async_session() as session:
-                await upsert_bump_config(session, guild_id, channel_id)
+        try:
+            # ギルド単位のロックで重複セットアップを防止
+            async with get_resource_lock(f"bump_setup:{guild_id}"):
+                # 設定を保存
+                async with async_session() as session:
+                    await upsert_bump_config(session, guild_id, channel_id)
 
             # キャッシュに追加
             if self._bump_guild_ids is not None:
@@ -904,45 +1000,59 @@ class BumpCog(commands.Cog):
             reminder_time_text: str | None = None  # 具体的なリマインド時刻
             custom_role_name: str | None = None  # カスタム通知ロール名
 
-            if isinstance(channel, discord.TextChannel):
-                result = await self._find_recent_bump(channel)
-                if result:
-                    service_name, bump_time = result
-                    detected_service = service_name
-                    remind_at = bump_time + timedelta(hours=REMINDER_HOURS)
-                    now = datetime.now(UTC)
+                if isinstance(channel, discord.TextChannel):
+                    result = await self._find_recent_bump(channel)
+                    if result:
+                        service_name, bump_time = result
+                        detected_service = service_name
+                        remind_at = bump_time + timedelta(hours=REMINDER_HOURS)
+                        now = datetime.now(UTC)
 
-                    if remind_at > now:
-                        # 次の bump まで待機中 → リマインダーを作成
-                        async with async_session() as session:
-                            reminder = await upsert_bump_reminder(
-                                session,
-                                guild_id=guild_id,
-                                channel_id=channel_id,
-                                service_name=service_name,
-                                remind_at=remind_at,
+                        if remind_at > now:
+                            # 次の bump まで待機中 → リマインダーを作成
+                            async with async_session() as session:
+                                reminder = await upsert_bump_reminder(
+                                    session,
+                                    guild_id=guild_id,
+                                    channel_id=channel_id,
+                                    service_name=service_name,
+                                    remind_at=remind_at,
+                                )
+                                is_enabled = reminder.is_enabled
+                                # カスタムロール名を取得
+                                if reminder.role_id:
+                                    role = interaction.guild.get_role(
+                                        int(reminder.role_id)
+                                    )
+                                    if role:
+                                        custom_role_name = role.name
+                            ts = int(remind_at.timestamp())
+                            reminder_time_text = f"<t:{ts}:t>"
+                            recent_bump_info = (
+                                f"\n\n**📊 直近の bump を検出:**\n"
+                                f"サービス: **{service_name}**\n"
+                                f"次の bump 可能時刻: {reminder_time_text}\n"
+                                f"リマインダーを自動設定しました。"
                             )
-                            is_enabled = reminder.is_enabled
-                            # カスタムロール名を取得
-                            if reminder.role_id:
-                                role = interaction.guild.get_role(int(reminder.role_id))
-                                if role:
-                                    custom_role_name = role.name
-                        ts = int(remind_at.timestamp())
-                        reminder_time_text = f"<t:{ts}:t>"
-                        recent_bump_info = (
-                            f"\n\n**📊 直近の bump を検出:**\n"
-                            f"サービス: **{service_name}**\n"
-                            f"次の bump 可能時刻: {reminder_time_text}\n"
-                            f"リマインダーを自動設定しました。"
-                        )
-                    else:
-                        # 既に bump 可能
-                        recent_bump_info = (
-                            f"\n\n**📊 直近の bump を検出:**\n"
-                            f"サービス: **{service_name}**\n"
-                            f"✅ 現在 bump 可能です！"
-                        )
+                        else:
+                            # 既に bump 可能
+                            recent_bump_info = (
+                                f"\n\n**📊 直近の bump を検出:**\n"
+                                f"サービス: **{service_name}**\n"
+                                f"✅ 現在 bump 可能です！"
+                            )
+        except Exception:
+            logger.exception(
+                "bump_setup failed: guild=%s channel=%s user=%s",
+                guild_id,
+                channel_id,
+                interaction.user.id if interaction.user else None,
+            )
+            await interaction.followup.send(
+                "設定中にエラーが発生しました。時間をおいて再度お試しください。",
+                ephemeral=True,
+            )
+            return
 
         # リマインド時刻が分かっている場合は具体的な時刻を表示
         if reminder_time_text:
@@ -972,22 +1082,54 @@ class BumpCog(commands.Cog):
             # 直近の bump が検出された場合、そのサービスのボタンを表示
             view = BumpNotificationView(guild_id, detected_service, is_enabled)
             self.bot.add_view(view)
-            await interaction.followup.send(embed=embed, view=view)
+            try:
+                await interaction.followup.send(embed=embed, view=view)
+            except discord.HTTPException:
+                logger.warning(
+                    "bump_setup followup failed (single view): guild=%s user=%s",
+                    interaction.guild_id,
+                    interaction.user.id if interaction.user else None,
+                    exc_info=True,
+                )
         else:
             # 検出されなかった場合、両方のサービスのボタンを表示
-            await interaction.followup.send(embed=embed)
+            try:
+                await interaction.followup.send(embed=embed)
+            except discord.HTTPException:
+                logger.warning(
+                    "bump_setup followup failed (base embed): guild=%s user=%s",
+                    interaction.guild_id,
+                    interaction.user.id if interaction.user else None,
+                    exc_info=True,
+                )
             # DISBOARD 用
             view_disboard = BumpNotificationView(guild_id, "DISBOARD", True)
             self.bot.add_view(view_disboard)
-            await interaction.followup.send(
-                "**DISBOARD** の通知設定:", view=view_disboard
-            )
+            try:
+                await interaction.followup.send(
+                    "**DISBOARD** の通知設定:", view=view_disboard
+                )
+            except discord.HTTPException:
+                logger.warning(
+                    "bump_setup followup failed (disboard view): guild=%s user=%s",
+                    interaction.guild_id,
+                    interaction.user.id if interaction.user else None,
+                    exc_info=True,
+                )
             # ディス速報用
             view_dissoku = BumpNotificationView(guild_id, "ディス速報", True)
             self.bot.add_view(view_dissoku)
-            await interaction.followup.send(
-                "**ディス速報** の通知設定:", view=view_dissoku
-            )
+            try:
+                await interaction.followup.send(
+                    "**ディス速報** の通知設定:", view=view_dissoku
+                )
+            except discord.HTTPException:
+                logger.warning(
+                    "bump_setup followup failed (dissoku view): guild=%s user=%s",
+                    interaction.guild_id,
+                    interaction.user.id if interaction.user else None,
+                    exc_info=True,
+                )
         logger.info(
             "Bump monitoring enabled: guild=%s channel=%s",
             guild_id,
@@ -1005,11 +1147,27 @@ class BumpCog(commands.Cog):
 
         guild_id = str(interaction.guild.id)
 
-        async with async_session() as session:
-            config = await get_bump_config(session, guild_id)
-            # 各サービスのリマインダー設定を取得
-            disboard_reminder = await get_bump_reminder(session, guild_id, "DISBOARD")
-            dissoku_reminder = await get_bump_reminder(session, guild_id, "ディス速報")
+        try:
+            async with async_session() as session:
+                config = await get_bump_config(session, guild_id)
+                # 各サービスのリマインダー設定を取得
+                disboard_reminder = await get_bump_reminder(
+                    session, guild_id, "DISBOARD"
+                )
+                dissoku_reminder = await get_bump_reminder(
+                    session, guild_id, "ディス速報"
+                )
+        except Exception:
+            logger.exception(
+                "bump_status failed: guild=%s user=%s",
+                interaction.guild_id,
+                interaction.user.id if interaction.user else None,
+            )
+            await interaction.response.send_message(
+                "状態取得中にエラーが発生しました。時間をおいて再度お試しください。",
+                ephemeral=True,
+            )
+            return
 
         if config:
             # Discord タイムスタンプ形式で設定日時を表示
@@ -1064,8 +1222,20 @@ class BumpCog(commands.Cog):
 
         guild_id = str(interaction.guild.id)
 
-        async with async_session() as session:
-            deleted = await delete_bump_config(session, guild_id)
+        try:
+            async with async_session() as session:
+                deleted = await delete_bump_config(session, guild_id)
+        except Exception:
+            logger.exception(
+                "bump_disable failed: guild=%s user=%s",
+                interaction.guild_id,
+                interaction.user.id if interaction.user else None,
+            )
+            await interaction.response.send_message(
+                "停止処理でエラーが発生しました。時間をおいて再度お試しください。",
+                ephemeral=True,
+            )
+            return
 
         # キャッシュから削除
         if self._bump_guild_ids is not None:
