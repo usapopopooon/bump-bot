@@ -1,0 +1,22 @@
+services:
+  bump-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN:?DISCORD_TOKEN is required}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-1}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-0}
+      DATABASE_REQUIRE_SSL: ${DATABASE_REQUIRE_SSL:-false}
+    mem_limit: 128m
+    mem_reservation: 64m
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 64M

@@ -25,14 +25,19 @@ DB_MAX_OVERFLOW=0
 ```
 
 ## Run (Coolify)
-- Build: `Dockerfile`
-- Start command: `python -m src.main`
+- Use `docker-compose.yml`
+- Set `DISCORD_TOKEN` and `DATABASE_URL` in Coolify environment variables
 - Recommended for a single-server deployment:
   - Memory limit: `128 MB`
   - Memory reservation: `64 MB`
   - `DB_POOL_SIZE=1`
   - `DB_MAX_OVERFLOW=0`
   - If it restarts with OOM, raise the limit to `192 MB`
+
+## Run (Docker Compose)
+```bash
+docker compose up --build
+```
 
 ## Install
 ```bash
