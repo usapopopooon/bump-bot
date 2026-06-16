@@ -10,7 +10,7 @@ Discordのbump成功を検知し、一定時間後にリマインドを送信す
 
 ## Environment Variables
 - `DISCORD_TOKEN` (required)
-- `DATABASE_URL` (required)
+- `DATABASE_URL` (optional for Docker Compose, default: internal PostgreSQL)
 - `LOG_LEVEL` (optional, default: `INFO`)
 - `DB_POOL_SIZE` (optional, default: `1`)
 - `DB_MAX_OVERFLOW` (optional, default: `0`)
@@ -18,7 +18,10 @@ Discordのbump成功を検知し、一定時間後にリマインドを送信す
 Example:
 ```env
 DISCORD_TOKEN=your-discord-bot-token
-DATABASE_URL=postgresql+asyncpg://user:password@localhost/discord_util_bot
+POSTGRES_DB=bump_bot
+POSTGRES_USER=bump_bot
+POSTGRES_PASSWORD=bump_bot_password
+DATABASE_URL=postgresql+asyncpg://bump_bot:bump_bot_password@db:5432/bump_bot
 LOG_LEVEL=INFO
 DB_POOL_SIZE=1
 DB_MAX_OVERFLOW=0
@@ -26,13 +29,16 @@ DB_MAX_OVERFLOW=0
 
 ## Run (Coolify)
 - Use `docker-compose.yml`
-- Set `DISCORD_TOKEN` and `DATABASE_URL` in Coolify environment variables
+- Set `DISCORD_TOKEN` in Coolify environment variables
+- The compose file includes PostgreSQL as `db`
 - Recommended for a single-server deployment:
-  - Memory limit: `128 MB`
-  - Memory reservation: `64 MB`
+  - Bot memory limit: `128 MB`
+  - Bot memory reservation: `64 MB`
+  - PostgreSQL memory limit: `256 MB`
+  - PostgreSQL memory reservation: `128 MB`
   - `DB_POOL_SIZE=1`
   - `DB_MAX_OVERFLOW=0`
-  - If it restarts with OOM, raise the limit to `192 MB`
+  - If the bot restarts with OOM, raise the bot limit to `192 MB`
 
 ## Run (Docker Compose)
 ```bash

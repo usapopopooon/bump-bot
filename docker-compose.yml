@@ -7,11 +7,14 @@ services:
     init: true
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN:?DISCORD_TOKEN is required}
-      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://bump_bot:bump_bot_password@db:5432/bump_bot}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DB_POOL_SIZE: ${DB_POOL_SIZE:-1}
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-0}
       DATABASE_REQUIRE_SSL: ${DATABASE_REQUIRE_SSL:-false}
+    depends_on:
+      db:
+        condition: service_healthy
     mem_limit: 128m
     mem_reservation: 64m
     deploy:
@@ -20,3 +23,29 @@ services:
           memory: 128M
         reservations:
           memory: 64M
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-bump_bot}
+      POSTGRES_USER: ${POSTGRES_USER:-bump_bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bump_bot_password}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 256m
+    mem_reservation: 128m
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+
+volumes:
+  postgres-data:
