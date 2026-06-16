@@ -244,7 +244,14 @@ class Settings(BaseSettings):
             - :mod:`src.database.engine`: この URL を使用してエンジンを作成
             - asyncpg: https://github.com/MagicStack/asyncpg
         """
-        url = self.database_url
+        url = self.database_url.strip()
+        if (
+            len(url) >= 2
+            and url[0] == url[-1]
+            and url[0] in {'"', "'"}
+        ):
+            url = url[1:-1].strip()
+
         # 既に asyncpg ドライバが指定されている場合はそのまま返す
         if url.startswith("postgresql+asyncpg://"):
             return url
@@ -253,6 +260,11 @@ class Settings(BaseSettings):
             url = url.replace("postgres://", "postgresql+asyncpg://", 1)
         elif url.startswith("postgresql://"):
             url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        else:
+            raise ValueError(
+                "DATABASE_URL must start with postgres://, postgresql://, "
+                "or postgresql+asyncpg://"
+            )
         return url
 
 
