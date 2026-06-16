@@ -40,7 +40,7 @@ Notes:
 
     - DATABASE_REQUIRE_SSL=true: SSL 接続を有効化
     - DB_POOL_SIZE: コネクションプールサイズ (デフォルト: 1)
-    - DB_MAX_OVERFLOW: オーバーフロー接続数 (デフォルト: 1)
+    - DB_MAX_OVERFLOW: オーバーフロー接続数 (デフォルト: 0)
 """
 
 import asyncio

@@ -13,7 +13,7 @@ Discordのbump成功を検知し、一定時間後にリマインドを送信す
 - `DATABASE_URL` (required)
 - `LOG_LEVEL` (optional, default: `INFO`)
 - `DB_POOL_SIZE` (optional, default: `1`)
-- `DB_MAX_OVERFLOW` (optional, default: `1`)
+- `DB_MAX_OVERFLOW` (optional, default: `0`)
 
 Example:
 ```env
@@ -21,17 +21,18 @@ DISCORD_TOKEN=your-discord-bot-token
 DATABASE_URL=postgresql+asyncpg://user:password@localhost/discord_util_bot
 LOG_LEVEL=INFO
 DB_POOL_SIZE=1
-DB_MAX_OVERFLOW=1
+DB_MAX_OVERFLOW=0
 ```
 
 ## Run (Coolify)
 - Build: `Dockerfile`
 - Start command: `python -m src.main`
 - Recommended for a single-server deployment:
-  - Memory limit: `256 MB`
-  - Memory reservation: `128 MB`
+  - Memory limit: `128 MB`
+  - Memory reservation: `64 MB`
   - `DB_POOL_SIZE=1`
-  - `DB_MAX_OVERFLOW=1`
+  - `DB_MAX_OVERFLOW=0`
+  - If it restarts with OOM, raise the limit to `192 MB`
 
 ## Install
 ```bash
