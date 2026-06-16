@@ -36,11 +36,11 @@ See Also:
     - SQLAlchemy asyncio: https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html
 
 Notes:
-    Heroku 環境では以下の環境変数を設定する:
+    本番環境では以下の環境変数で DB 接続設定を調整できる:
 
     - DATABASE_REQUIRE_SSL=true: SSL 接続を有効化
-    - DB_POOL_SIZE: コネクションプールサイズ (デフォルト: 5)
-    - DB_MAX_OVERFLOW: オーバーフロー接続数 (デフォルト: 10)
+    - DB_POOL_SIZE: コネクションプールサイズ (デフォルト: 1)
+    - DB_MAX_OVERFLOW: オーバーフロー接続数 (デフォルト: 1)
 """
 
 import asyncio
@@ -80,7 +80,7 @@ def _parse_int_env(name: str, default: int) -> int:
         パースした整数値、またはデフォルト値
 
     Examples:
-        DB_POOL_SIZE=5 → 5
+        DB_POOL_SIZE=1 → 1
         DB_POOL_SIZE=abc → default (警告ログ出力)
         DB_POOL_SIZE=   → default (未設定扱い)
     """
