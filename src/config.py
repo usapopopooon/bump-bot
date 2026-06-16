@@ -245,11 +245,7 @@ class Settings(BaseSettings):
             - asyncpg: https://github.com/MagicStack/asyncpg
         """
         url = self.database_url.strip()
-        if (
-            len(url) >= 2
-            and url[0] == url[-1]
-            and url[0] in {'"', "'"}
-        ):
+        if len(url) >= 2 and url[0] == url[-1] and url[0] in {'"', "'"}:
             url = url[1:-1].strip()
 
         # 既に asyncpg ドライバが指定されている場合はそのまま返す
