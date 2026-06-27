@@ -5,6 +5,9 @@ from datetime import UTC, datetime
 from sqlalchemy import Boolean, DateTime, Integer, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+DEFAULT_BUMP_REMINDER_DELAY_MINUTES = 120
+DISBOARD_BUMP_REMINDER_DELAY_MINUTES = 300
+
 
 class Base(DeclarativeBase):
     """Base model class."""
@@ -27,6 +30,12 @@ class BumpReminder(Base):
     )
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     role_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    reminder_delay_minutes: Mapped[int] = mapped_column(
+        Integer,
+        default=DEFAULT_BUMP_REMINDER_DELAY_MINUTES,
+        server_default=str(DEFAULT_BUMP_REMINDER_DELAY_MINUTES),
+        nullable=False,
+    )
 
 
 class BumpConfig(Base):

@@ -54,7 +54,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from src.config import settings
 from src.constants import DEFAULT_DB_MAX_OVERFLOW, DEFAULT_DB_POOL_SIZE
-from src.database.models import Base
+from src.database.models import (
+    DEFAULT_BUMP_REMINDER_DELAY_MINUTES,
+    DISBOARD_BUMP_REMINDER_DELAY_MINUTES,
+    Base,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +220,45 @@ async def init_db() -> None:
     """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await _ensure_bump_reminder_delay_column(conn)
+
+
+async def _ensure_bump_reminder_delay_column(conn: Any) -> None:
+    """既存DBにリマインド間隔カラムがない場合だけ追加する。"""
+    await conn.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext('bump_reminder_delay_minutes'))")
+    )
+    result = await conn.execute(
+        text(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'bump_reminders'
+                  AND column_name = 'reminder_delay_minutes'
+            )
+            """
+        )
+    )
+    if result.scalar():
+        return
+
+    await conn.execute(
+        text(
+            "ALTER TABLE bump_reminders "
+            "ADD COLUMN IF NOT EXISTS reminder_delay_minutes INTEGER NOT NULL DEFAULT "
+            f"{DEFAULT_BUMP_REMINDER_DELAY_MINUTES}"
+        )
+    )
+    await conn.execute(
+        text(
+            "UPDATE bump_reminders "
+            "SET reminder_delay_minutes = :minutes "
+            "WHERE service_name = 'DISBOARD'"
+        ),
+        {"minutes": DISBOARD_BUMP_REMINDER_DELAY_MINUTES},
+    )
 
 
 async def get_session() -> AsyncSession:

@@ -20,7 +20,8 @@ from src.cogs.bump import (
     DISSOKU_SUCCESS_KEYWORD,
     TARGET_ROLE_NAME,
     BumpCog,
-    _get_reminder_hours,
+    _format_reminder_delay,
+    _get_reminder_minutes,
 )
 from src.database.models import BumpReminder
 
@@ -160,9 +161,27 @@ def test_service_registry_helpers() -> None:
         assert cog._get_service_by_bot_id(service.bot_id) == service
 
 
-def test_reminder_hours_by_service() -> None:
-    assert _get_reminder_hours("DISBOARD") == 5
-    assert _get_reminder_hours("ディス速報") == 2
+def test_reminder_minutes_by_service() -> None:
+    assert _get_reminder_minutes("DISBOARD") == 300
+    assert _get_reminder_minutes("ディス速報") == 120
+
+
+def test_reminder_minutes_uses_configured_value() -> None:
+    reminder = BumpReminder(
+        guild_id="1",
+        channel_id="2",
+        service_name="DISBOARD",
+        remind_at=None,
+        is_enabled=True,
+        reminder_delay_minutes=90,
+    )
+    assert _get_reminder_minutes("DISBOARD", reminder) == 90
+
+
+def test_format_reminder_delay() -> None:
+    assert _format_reminder_delay(45) == "45分"
+    assert _format_reminder_delay(120) == "2時間"
+    assert _format_reminder_delay(90) == "1時間30分"
 
 
 def test_sync_from_history_returns_no_result_when_not_found() -> None:
@@ -211,6 +230,10 @@ def test_sync_from_history_sets_both_services() -> None:
         with (
             patch.object(cog, "_find_recent_bumps", AsyncMock(return_value=recent)),
             patch(
+                "src.cogs.bump.get_bump_reminder",
+                AsyncMock(return_value=None),
+            ),
+            patch(
                 "src.cogs.bump.upsert_bump_reminder",
                 AsyncMock(return_value=fake_reminder),
             ) as upsert_mock,
@@ -240,11 +263,13 @@ def test_format_service_status_with_future_reminder() -> None:
         remind_at=datetime.now(UTC) + timedelta(minutes=30),
         is_enabled=True,
         role_id="123",
+        reminder_delay_minutes=90,
     )
 
     status = cog._format_service_status(guild, "DISBOARD", reminder)
     assert "通知: **有効**" in status
     assert "通知ロール: `@Bump通知`" in status
+    assert "リマインド時間: 1時間30分" in status
     assert "次回bump可能時刻: <t:" in status
 
 
@@ -254,4 +279,5 @@ def test_format_service_status_without_reminder() -> None:
     status = cog._format_service_status(guild, "ディス速報", None)
     assert "通知: **有効 (デフォルト)**" in status
     assert f"通知ロール: `@{TARGET_ROLE_NAME}` (デフォルト)" in status
+    assert "リマインド時間: 2時間" in status
     assert "次回bump可能時刻: 未判定" in status

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -12,6 +13,7 @@ class DummySession:
     def __init__(self) -> None:
         self.add = self._add_sync
         self.commit = AsyncMock()
+        self.refresh = AsyncMock()
         self.added: list[object] = []
 
     def _add_sync(self, obj: object) -> None:
@@ -30,6 +32,7 @@ async def test_update_bump_reminder_role_updates_existing(
         remind_at=None,
         is_enabled=True,
         role_id=None,
+        reminder_delay_minutes=300,
     )
 
     monkeypatch.setattr(
@@ -72,4 +75,94 @@ async def test_update_bump_reminder_role_creates_when_missing(
     assert created.channel_id == ""
     assert created.role_id == "999"
     assert created.remind_at is None
+    assert created.reminder_delay_minutes == 300
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_update_bump_reminder_delay_minutes_updates_existing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = DummySession()
+    reminder = BumpReminder(
+        guild_id="1",
+        channel_id="2",
+        service_name="DISBOARD",
+        remind_at=None,
+        is_enabled=True,
+        role_id=None,
+        reminder_delay_minutes=300,
+    )
+
+    monkeypatch.setattr(
+        bump_service,
+        "get_bump_reminder",
+        AsyncMock(return_value=reminder),
+    )
+
+    updated = await bump_service.update_bump_reminder_delay_minutes(
+        session, "1", "DISBOARD", 90
+    )
+
+    assert updated is reminder
+    assert reminder.reminder_delay_minutes == 90
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_update_bump_reminder_delay_minutes_recalculates_pending_reminder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = DummySession()
+    reminder = BumpReminder(
+        guild_id="1",
+        channel_id="2",
+        service_name="DISBOARD",
+        remind_at=datetime(2026, 6, 24, 17, 0, tzinfo=UTC),
+        is_enabled=True,
+        role_id=None,
+        reminder_delay_minutes=300,
+    )
+
+    monkeypatch.setattr(
+        bump_service,
+        "get_bump_reminder",
+        AsyncMock(return_value=reminder),
+    )
+
+    updated = await bump_service.update_bump_reminder_delay_minutes(
+        session, "1", "DISBOARD", 240
+    )
+
+    assert updated is reminder
+    assert reminder.remind_at == datetime(2026, 6, 24, 16, 0, tzinfo=UTC)
+    assert reminder.reminder_delay_minutes == 240
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_update_bump_reminder_delay_minutes_creates_when_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = DummySession()
+
+    monkeypatch.setattr(
+        bump_service,
+        "get_bump_reminder",
+        AsyncMock(return_value=None),
+    )
+
+    created = await bump_service.update_bump_reminder_delay_minutes(
+        session, "1", "ディス速報", 180
+    )
+
+    assert created is session.added[0]
+    assert isinstance(created, BumpReminder)
+    assert created.guild_id == "1"
+    assert created.service_name == "ディス速報"
+    assert created.channel_id == ""
+    assert created.remind_at is None
+    assert created.is_enabled is True
+    assert created.reminder_delay_minutes == 180
+    session.commit.assert_awaited_once()
+    session.refresh.assert_awaited_once_with(created)

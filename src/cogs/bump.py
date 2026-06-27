@@ -34,8 +34,10 @@ from src.services.bump_service import (
     delete_bump_reminders_by_guild,
     get_bump_config,
     get_bump_reminder,
+    get_default_reminder_delay_minutes,
     get_due_bump_reminders,
     toggle_bump_reminder,
+    update_bump_reminder_delay_minutes,
     update_bump_reminder_role,
     upsert_bump_config,
     upsert_bump_reminder,
@@ -86,12 +88,6 @@ BUMP_SERVICES: tuple[BumpServiceDefinition, ...] = (
         check_content=True,
     ),
 )
-
-# デフォルトのリマインダー送信間隔 (bump から何時間後か)
-REMINDER_HOURS = 2
-
-# DISBOARD のリマインダー送信間隔 (bump から何時間後か)
-DISBOARD_REMINDER_HOURS = 5
 
 # リマインダーチェック間隔 (秒)
 REMINDER_CHECK_INTERVAL_SECONDS = 30
@@ -169,11 +165,23 @@ def clear_bump_notification_cooldown_cache() -> None:
     _bump_last_cleanup_time = float("-inf")
 
 
-def _get_reminder_hours(service_name: str) -> int:
-    """サービスごとのリマインダー送信間隔を返す。"""
-    if service_name == "DISBOARD":
-        return DISBOARD_REMINDER_HOURS
-    return REMINDER_HOURS
+def _get_reminder_minutes(
+    service_name: str, reminder: BumpReminder | None = None
+) -> int:
+    """設定済み、またはサービスデフォルトのリマインド間隔を分で返す。"""
+    if reminder and reminder.reminder_delay_minutes is not None:
+        return reminder.reminder_delay_minutes
+    return get_default_reminder_delay_minutes(service_name)
+
+
+def _format_reminder_delay(minutes: int) -> str:
+    """リマインド間隔を表示用に整形する。"""
+    hours, remaining_minutes = divmod(minutes, 60)
+    if hours == 0:
+        return f"{remaining_minutes}分"
+    if remaining_minutes == 0:
+        return f"{hours}時間"
+    return f"{hours}時間{remaining_minutes}分"
 
 
 # =============================================================================
@@ -642,9 +650,6 @@ class BumpCog(commands.Cog):
             return
 
         # 1セッションで設定確認 + アトミックなリマインダー登録
-        remind_at = datetime.now(UTC) + timedelta(
-            hours=_get_reminder_hours(service_name)
-        )
         async with async_session() as session:
             # このギルドの bump 監視設定を確認
             config = await get_bump_config(session, guild_id)
@@ -660,6 +665,12 @@ class BumpCog(commands.Cog):
                 )
                 return
 
+            current_reminder = await get_bump_reminder(session, guild_id, service_name)
+            reminder_delay_minutes = _get_reminder_minutes(
+                service_name, current_reminder
+            )
+            remind_at = datetime.now(UTC) + timedelta(minutes=reminder_delay_minutes)
+
             # アトミックに bump 検知の権利を取得
             # (複数インスタンス実行時、最初に claim したインスタンスだけが続行する)
             reminder = await claim_bump_detection(
@@ -668,6 +679,7 @@ class BumpCog(commands.Cog):
                 channel_id=str(message.channel.id),
                 service_name=service_name,
                 remind_at=remind_at,
+                reminder_delay_minutes=reminder_delay_minutes,
             )
             if not reminder:
                 logger.info(
@@ -834,9 +846,13 @@ class BumpCog(commands.Cog):
 
         async with async_session() as session:
             for service_name, bump_time in recent_bumps.items():
-                remind_at = bump_time + timedelta(
-                    hours=_get_reminder_hours(service_name)
+                current_reminder = await get_bump_reminder(
+                    session, str(guild.id), service_name
                 )
+                reminder_delay_minutes = _get_reminder_minutes(
+                    service_name, current_reminder
+                )
+                remind_at = bump_time + timedelta(minutes=reminder_delay_minutes)
                 if remind_at <= now:
                     skipped.append(service_name)
                     continue
@@ -847,6 +863,7 @@ class BumpCog(commands.Cog):
                     channel_id=channel_id,
                     service_name=service_name,
                     remind_at=remind_at,
+                    reminder_delay_minutes=reminder_delay_minutes,
                 )
                 ts = int(remind_at.timestamp())
                 status = "有効" if reminder.is_enabled else "無効"
@@ -949,6 +966,9 @@ class BumpCog(commands.Cog):
         """サービス別の status 表示テキストを生成する。"""
         role_display = f"`@{TARGET_ROLE_NAME}` (デフォルト)"
         notify_status = "有効 (デフォルト)"
+        reminder_delay = _format_reminder_delay(
+            _get_reminder_minutes(service_name, reminder)
+        )
         next_bump = "未判定"
 
         if reminder:
@@ -977,6 +997,7 @@ class BumpCog(commands.Cog):
             f"・{service_name}:\n"
             f"  通知: **{notify_status}**\n"
             f"  通知ロール: {role_display}\n"
+            f"  リマインド時間: {reminder_delay}\n"
             f"  次回bump可能時刻: {next_bump}"
         )
 
@@ -1128,20 +1149,28 @@ class BumpCog(commands.Cog):
                         recent_bumps.items(), key=lambda item: item[1]
                     )
                     detected_service = service_name
-                    remind_at = bump_time + timedelta(
-                        hours=_get_reminder_hours(service_name)
-                    )
                     now = datetime.now(UTC)
 
-                    if remind_at > now:
-                        # 次の bump まで待機中 → リマインダーを作成
-                        async with async_session() as session:
+                    async with async_session() as session:
+                        current_reminder = await get_bump_reminder(
+                            session, guild_id, service_name
+                        )
+                        reminder_delay_minutes = _get_reminder_minutes(
+                            service_name, current_reminder
+                        )
+                        remind_at = bump_time + timedelta(
+                            minutes=reminder_delay_minutes
+                        )
+
+                        if remind_at > now:
+                            # 次の bump まで待機中 → リマインダーを作成
                             reminder = await upsert_bump_reminder(
                                 session,
                                 guild_id=guild_id,
                                 channel_id=channel_id,
                                 service_name=service_name,
                                 remind_at=remind_at,
+                                reminder_delay_minutes=reminder_delay_minutes,
                             )
                             is_enabled = reminder.is_enabled
                             # カスタムロール名を取得
@@ -1149,6 +1178,8 @@ class BumpCog(commands.Cog):
                                 role = interaction.guild.get_role(int(reminder.role_id))
                                 if role:
                                     custom_role_name = role.name
+
+                    if remind_at > now:
                         ts = int(remind_at.timestamp())
                         reminder_time_text = f"<t:{ts}:t>"
                         recent_bump_info = (
@@ -1207,6 +1238,68 @@ class BumpCog(commands.Cog):
             "Bump monitoring enabled: guild=%s channel=%s",
             guild_id,
             channel_id,
+        )
+
+    @bump_group.command(name="delay", description="bumpリマインド時間を変更する")
+    @app_commands.describe(
+        service_name="対象サービス",
+        minutes="bump後、何分でリマインドするか (1-1440)",
+    )
+    @app_commands.choices(
+        service_name=[
+            app_commands.Choice(name="DISBOARD", value="DISBOARD"),
+            app_commands.Choice(name="ディス速報", value="ディス速報"),
+        ]
+    )
+    async def bump_delay(
+        self,
+        interaction: discord.Interaction,
+        service_name: str,
+        minutes: app_commands.Range[int, 1, 1440],
+    ) -> None:
+        """サービスごとの bump リマインド時間を設定する。"""
+        if not interaction.guild:
+            await interaction.response.send_message(
+                "このコマンドはサーバー内でのみ使用できます。", ephemeral=True
+            )
+            return
+
+        if service_name not in self._get_monitored_service_names():
+            await interaction.response.send_message(
+                "未対応のサービスです。", ephemeral=True
+            )
+            return
+
+        guild_id = str(interaction.guild.id)
+        reminder_delay_minutes = int(minutes)
+
+        async with (
+            get_resource_lock(f"bump_delay:{guild_id}:{service_name}"),
+            async_session() as session,
+        ):
+            await update_bump_reminder_delay_minutes(
+                session,
+                guild_id,
+                service_name,
+                reminder_delay_minutes,
+            )
+
+        embed = discord.Embed(
+            title="Bump リマインド時間を変更しました",
+            description=(
+                f"サービス: **{service_name}**\n"
+                f"リマインド時間: **{_format_reminder_delay(reminder_delay_minutes)}**"
+            ),
+            color=DEFAULT_EMBED_COLOR,
+            timestamp=datetime.now(UTC),
+        )
+        embed.set_footer(text="Bump リマインダー")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        logger.info(
+            "Bump reminder delay changed: guild=%s service=%s minutes=%s",
+            guild_id,
+            service_name,
+            reminder_delay_minutes,
         )
 
     @bump_group.command(name="status", description="bump 監視の設定状況を確認する")

@@ -55,6 +55,15 @@ pip install -r requirements.txt
 python -m src.main
 ```
 
+## Commands
+- `/bump setup`: 現在のチャンネルで bump 監視を開始
+- `/bump status`: 監視設定、通知設定、次回予定を表示
+- `/bump delay`: サービスごとのリマインド時間を分単位で変更
+- `/bump sync-from-history`: 履歴から前回 bump を探して次回通知を再設定
+- `/bump disable`: bump 監視を停止
+
+リマインド時間のデフォルトは DISBOARD が 300 分、ディス速報が 120 分です。
+
 ## Main Files
 - `src/main.py`
 - `src/bot.py`

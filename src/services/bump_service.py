@@ -1,12 +1,17 @@
 """BumpReminder, BumpConfig の DB 操作。"""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import delete, select, update
 from sqlalchemy import or_ as db_or
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database.models import BumpConfig, BumpReminder
+from src.database.models import (
+    DEFAULT_BUMP_REMINDER_DELAY_MINUTES,
+    DISBOARD_BUMP_REMINDER_DELAY_MINUTES,
+    BumpConfig,
+    BumpReminder,
+)
 
 __all__ = [
     "claim_bump_detection",
@@ -17,7 +22,9 @@ __all__ = [
     "get_bump_config",
     "get_bump_reminder",
     "get_due_bump_reminders",
+    "get_default_reminder_delay_minutes",
     "toggle_bump_reminder",
+    "update_bump_reminder_delay_minutes",
     "update_bump_reminder_role",
     "upsert_bump_config",
     "upsert_bump_reminder",
@@ -29,12 +36,20 @@ __all__ = [
 # =============================================================================
 
 
+def get_default_reminder_delay_minutes(service_name: str) -> int:
+    """サービスごとのデフォルトリマインド間隔を分で返す。"""
+    if service_name == "DISBOARD":
+        return DISBOARD_BUMP_REMINDER_DELAY_MINUTES
+    return DEFAULT_BUMP_REMINDER_DELAY_MINUTES
+
+
 async def upsert_bump_reminder(
     session: AsyncSession,
     guild_id: str,
     channel_id: str,
     service_name: str,
     remind_at: datetime,
+    reminder_delay_minutes: int | None = None,
 ) -> BumpReminder:
     """bump リマインダーを作成または更新する。
 
@@ -47,6 +62,7 @@ async def upsert_bump_reminder(
         channel_id (str): リマインド通知を送信するチャンネルの ID。
         service_name (str): サービス名 ("DISBOARD" または "ディス速報")。
         remind_at (datetime): リマインドを送信する予定時刻 (UTC)。
+        reminder_delay_minutes: 新規作成時に保存するリマインド間隔。
 
     Returns:
         BumpReminder: 作成または更新された BumpReminder オブジェクト。
@@ -62,7 +78,7 @@ async def upsert_bump_reminder(
             from datetime import UTC, datetime, timedelta
 
             async with async_session() as session:
-                remind_at = datetime.now(UTC) + timedelta(hours=2)
+                remind_at = datetime.now(UTC) + timedelta(minutes=120)
                 reminder = await upsert_bump_reminder(
                     session,
                     guild_id=str(guild.id),
@@ -98,6 +114,8 @@ async def upsert_bump_reminder(
         channel_id=channel_id,
         service_name=service_name,
         remind_at=remind_at,
+        reminder_delay_minutes=reminder_delay_minutes
+        or get_default_reminder_delay_minutes(service_name),
     )
     session.add(reminder)
     await session.commit()
@@ -159,6 +177,7 @@ async def claim_bump_detection(
     channel_id: str,
     service_name: str,
     remind_at: datetime,
+    reminder_delay_minutes: int | None = None,
 ) -> BumpReminder | None:
     """bump 検知の権利をアトミックに取得する。
 
@@ -171,12 +190,11 @@ async def claim_bump_detection(
         channel_id: bump を検知したチャンネルの ID
         service_name: サービス名 ("DISBOARD" または "ディス速報")
         remind_at: リマインド予定時刻 (UTC)
+        reminder_delay_minutes: 新規作成時に保存するリマインド間隔。
 
     Returns:
         claim 成功なら BumpReminder、既に別インスタンスが処理済みなら None
     """
-    from datetime import timedelta
-
     threshold = remind_at - timedelta(seconds=60)
 
     # アトミック UPDATE: remind_at が古い or NULL の場合のみ成功する
@@ -209,6 +227,8 @@ async def claim_bump_detection(
         channel_id=channel_id,
         service_name=service_name,
         remind_at=remind_at,
+        reminder_delay_minutes=reminder_delay_minutes
+        or get_default_reminder_delay_minutes(service_name),
     )
     session.add(reminder)
     await session.commit()
@@ -271,6 +291,7 @@ async def toggle_bump_reminder(
         service_name=service_name,
         remind_at=None,
         is_enabled=False,
+        reminder_delay_minutes=get_default_reminder_delay_minutes(service_name),
     )
     session.add(new_reminder)
     await session.commit()
@@ -309,10 +330,55 @@ async def update_bump_reminder_role(
         remind_at=None,
         is_enabled=True,
         role_id=role_id,
+        reminder_delay_minutes=get_default_reminder_delay_minutes(service_name),
     )
     session.add(new_reminder)
     await session.commit()
     return True
+
+
+async def update_bump_reminder_delay_minutes(
+    session: AsyncSession,
+    guild_id: str,
+    service_name: str,
+    reminder_delay_minutes: int,
+) -> BumpReminder:
+    """bump リマインダーの送信間隔を分単位で更新する。"""
+    reminder = await get_bump_reminder(session, guild_id, service_name)
+
+    if reminder:
+        reminder.remind_at = _recalculate_remind_at(
+            reminder.remind_at,
+            reminder.reminder_delay_minutes,
+            reminder_delay_minutes,
+        )
+        reminder.reminder_delay_minutes = reminder_delay_minutes
+        await session.commit()
+        return reminder
+
+    new_reminder = BumpReminder(
+        guild_id=guild_id,
+        channel_id="",  # 通知先チャンネルは bump 検知時に確定する
+        service_name=service_name,
+        remind_at=None,
+        is_enabled=True,
+        reminder_delay_minutes=reminder_delay_minutes,
+    )
+    session.add(new_reminder)
+    await session.commit()
+    await session.refresh(new_reminder)
+    return new_reminder
+
+
+def _recalculate_remind_at(
+    remind_at: datetime | None,
+    current_delay_minutes: int,
+    next_delay_minutes: int,
+) -> datetime | None:
+    """現在の待機中リマインダーを新しい delay に合わせて移動する。"""
+    if remind_at is None:
+        return None
+    return remind_at + timedelta(minutes=next_delay_minutes - current_delay_minutes)
 
 
 # =============================================================================
