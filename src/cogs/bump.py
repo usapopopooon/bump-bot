@@ -91,7 +91,7 @@ BUMP_SERVICES: tuple[BumpServiceDefinition, ...] = (
 REMINDER_HOURS = 2
 
 # DISBOARD のリマインダー送信間隔 (bump から何時間後か)
-DISBOARD_REMINDER_HOURS = 3
+DISBOARD_REMINDER_HOURS = 5
 
 # リマインダーチェック間隔 (秒)
 REMINDER_CHECK_INTERVAL_SECONDS = 30

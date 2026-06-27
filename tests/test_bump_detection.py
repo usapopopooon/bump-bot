@@ -161,7 +161,7 @@ def test_service_registry_helpers() -> None:
 
 
 def test_reminder_hours_by_service() -> None:
-    assert _get_reminder_hours("DISBOARD") == 3
+    assert _get_reminder_hours("DISBOARD") == 5
     assert _get_reminder_hours("ディス速報") == 2
 
 
