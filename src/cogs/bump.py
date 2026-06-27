@@ -1,6 +1,6 @@
 """Bump reminder cog for DISBOARD and ディス速報.
 
-DISBOARD/ディス速報の bump 成功を検知し、2時間後にリマインドを送信する。
+DISBOARD/ディス速報の bump 成功を検知し、サービス別の待機時間後にリマインドする。
 
 仕組み:
   - on_message で DISBOARD/ディス速報 Bot のメッセージを監視
@@ -87,8 +87,11 @@ BUMP_SERVICES: tuple[BumpServiceDefinition, ...] = (
     ),
 )
 
-# リマインダーの送信間隔 (bump から何時間後か)
+# デフォルトのリマインダー送信間隔 (bump から何時間後か)
 REMINDER_HOURS = 2
+
+# DISBOARD のリマインダー送信間隔 (bump から何時間後か)
+DISBOARD_REMINDER_HOURS = 3
 
 # リマインダーチェック間隔 (秒)
 REMINDER_CHECK_INTERVAL_SECONDS = 30
@@ -164,6 +167,13 @@ def clear_bump_notification_cooldown_cache() -> None:
     global _bump_last_cleanup_time
     _bump_notification_cooldown_cache.clear()
     _bump_last_cleanup_time = float("-inf")
+
+
+def _get_reminder_hours(service_name: str) -> int:
+    """サービスごとのリマインダー送信間隔を返す。"""
+    if service_name == "DISBOARD":
+        return DISBOARD_REMINDER_HOURS
+    return REMINDER_HOURS
 
 
 # =============================================================================
@@ -632,7 +642,9 @@ class BumpCog(commands.Cog):
             return
 
         # 1セッションで設定確認 + アトミックなリマインダー登録
-        remind_at = datetime.now(UTC) + timedelta(hours=REMINDER_HOURS)
+        remind_at = datetime.now(UTC) + timedelta(
+            hours=_get_reminder_hours(service_name)
+        )
         async with async_session() as session:
             # このギルドの bump 監視設定を確認
             config = await get_bump_config(session, guild_id)
@@ -822,7 +834,9 @@ class BumpCog(commands.Cog):
 
         async with async_session() as session:
             for service_name, bump_time in recent_bumps.items():
-                remind_at = bump_time + timedelta(hours=REMINDER_HOURS)
+                remind_at = bump_time + timedelta(
+                    hours=_get_reminder_hours(service_name)
+                )
                 if remind_at <= now:
                     skipped.append(service_name)
                     continue
@@ -1114,7 +1128,9 @@ class BumpCog(commands.Cog):
                         recent_bumps.items(), key=lambda item: item[1]
                     )
                     detected_service = service_name
-                    remind_at = bump_time + timedelta(hours=REMINDER_HOURS)
+                    remind_at = bump_time + timedelta(
+                        hours=_get_reminder_hours(service_name)
+                    )
                     now = datetime.now(UTC)
 
                     if remind_at > now:

@@ -20,6 +20,7 @@ from src.cogs.bump import (
     DISSOKU_SUCCESS_KEYWORD,
     TARGET_ROLE_NAME,
     BumpCog,
+    _get_reminder_hours,
 )
 from src.database.models import BumpReminder
 
@@ -157,6 +158,11 @@ def test_service_registry_helpers() -> None:
     assert names == [service.name for service in BUMP_SERVICES]
     for service in BUMP_SERVICES:
         assert cog._get_service_by_bot_id(service.bot_id) == service
+
+
+def test_reminder_hours_by_service() -> None:
+    assert _get_reminder_hours("DISBOARD") == 3
+    assert _get_reminder_hours("ディス速報") == 2
 
 
 def test_sync_from_history_returns_no_result_when_not_found() -> None:
